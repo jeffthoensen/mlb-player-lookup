@@ -1,55 +1,74 @@
+import argparse
+import sys
+
 import requests
 
+BASE_URL = "https://statsapi.mlb.com/api/v1"
+DEFAULT_SEASON = "2025"
+
+
+class PlayerLookupError(Exception):
+    """Raised when a player or their stats can't be found."""
+
+
 def search_player_id(name):
-    url = f"https://statsapi.mlb.com/api/v1/people/search?name={name}"
-    response = requests.get(url)
-    data = response.json()
-    people = data.get("people", [])
+    response = requests.get(f"{BASE_URL}/people/search", params={"name": name}, timeout=10)
+    response.raise_for_status()
+    people = response.json().get("people", [])
     if not people:
-        print("Player not found.")
-        return None
+        raise PlayerLookupError(f"No player found matching '{name}'.")
     return people[0]["id"]
 
-def get_player_stats(player_id):
-    season = "2025"
-    base_url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
 
-    # First, try to get pitching stats
-    pitching_url = f"{base_url}?stats=season&season={season}&group=pitching"
-    response = requests.get(pitching_url)
-    data = response.json()
-    stats_list = data.get("stats", [])
+def _fetch_stat_group(player_id, season, group):
+    url = f"{BASE_URL}/people/{player_id}/stats"
+    response = requests.get(
+        url, params={"stats": "season", "season": season, "group": group}, timeout=10
+    )
+    response.raise_for_status()
+    stats_list = response.json().get("stats", [])
     if stats_list and stats_list[0].get("splits"):
-        stats = stats_list[0]["splits"][0].get("stat", {})
-        if "inningsPitched" in stats:
-            return "Pitcher", stats
+        return stats_list[0]["splits"][0].get("stat", {})
+    return {}
 
-    # Then, try hitting stats
-    hitting_url = f"{base_url}?stats=season&season={season}&group=hitting"
-    response = requests.get(hitting_url)
-    data = response.json()
-    stats_list = data.get("stats", [])
-    if stats_list and stats_list[0].get("splits"):
-        stats = stats_list[0]["splits"][0].get("stat", {})
-        if "homeRuns" in stats or "atBats" in stats:
-            return "Hitter", stats
 
-    return None, None
+def get_player_stats(player_id, season=DEFAULT_SEASON):
+    pitching = _fetch_stat_group(player_id, season, "pitching")
+    if "inningsPitched" in pitching:
+        return "Pitcher", pitching
+
+    hitting = _fetch_stat_group(player_id, season, "hitting")
+    if "homeRuns" in hitting or "atBats" in hitting:
+        return "Hitter", hitting
+
+    raise PlayerLookupError(f"No usable stats available for {season}.")
+
+
+def lookup(name, season=DEFAULT_SEASON):
+    player_id = search_player_id(name)
+    return get_player_stats(player_id, season)
+
 
 def main():
-    name = input("Enter player name: ")
-    player_id = search_player_id(name)
-    if not player_id:
-        return
+    parser = argparse.ArgumentParser(description="Look up an MLB player's season stats.")
+    parser.add_argument("name", nargs="?", help="Player name, e.g. 'Shohei Ohtani'")
+    parser.add_argument(
+        "--season", default=DEFAULT_SEASON, help=f"Season year (default: {DEFAULT_SEASON})"
+    )
+    args = parser.parse_args()
 
-    role, stats = get_player_stats(player_id)
-    if not stats:
-        print("No usable stats available for 2025.")
-        return
+    name = args.name or input("Enter player name: ")
 
-    print(f"\n{role} Stats for 2025:\n")
+    try:
+        role, stats = lookup(name, args.season)
+    except (PlayerLookupError, requests.RequestException) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\n{role} Stats for {args.season}:\n")
     for key, value in stats.items():
         print(f"{key}: {value}")
+
 
 if __name__ == "__main__":
     main()
