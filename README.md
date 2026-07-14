@@ -20,3 +20,7 @@ pytest
 ```
 
 Tests mock the API calls, so they run without hitting the network.
+
+---
+
+Built by [Jeff Thoensen](https://jeffthoensen.com), a Context-Driven QA Engineer focused on automation, API testing, and exploratory testing.
